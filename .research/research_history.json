@@ -524,7 +524,43 @@
     "iterations": [
       {
         "iteration_id": 1,
-        "method": "Anytime Budget-Aware Diffusion Controller (ABCD)\n\nKey idea: couple a budget-conditioned weight generator *and* a learned early-exit policy so that the sampler can halt as soon as (i) the predicted budget would be exceeded or (ii) further steps bring negligible quality gain.\n\n1. Context vector c  = [log B, log F̂, ρ]  (as in BuCo-MWG).\n2. Weight generator  g_ψ(t | c, z)  – identical to BuCo-MWG (<15 k params).\n3. Early-exit policy π_θ(h_t | c) → p(stop=1).   Input h_t = concat(σ_t, ‖ε̂_t‖², t/T, c). One 2×32 MLP with Gumbel-Softmax so the stop/continue decision is differentiable.\n4. Differentiable cost predictor Ĉ(h_t) estimates the *remaining* latency if one more denoise step is executed on the current device.\n5. Joint training:\n   For each minibatch   L = L_eps + λ_1 KL_align + λ_2 max(0, Ĉ_accum−B)²  + λ_3 E_t [p(stop=1)·max(0, Q_target−Q̂_t)]  where Ĉ_accum accumulates predicted cost until the policy stops, and Q̂_t is a fast FID/CLIP proxy.\n   Gradients flow through g_ψ and π_θ so both the weights and the stopping rule co-adapt.\n6. Inference (Algorithm):\n   • compute c once; for t=1…K_max\n       – w_t ← g_ψ(t|c,z); perform denoise step\n       – if π_θ(h_t|c)=stop *or* elapsed>B: break\n   • return x_t.  Guarantees: elapsed ≤B by construction; quality monotonically non-decreasing because w_t≥0.\n\nNovelty: first diffusion framework that (1) produces *continuous* weight tables conditioned on hardware and budget and (2) learns an *instance-wise* halting policy, turning any off-the-shelf sampler into an anytime generator with formal budget compliance."
+        "method": "Anytime Budget-Aware Diffusion Controller (ABCD)\n\nKey idea: couple a budget-conditioned weight generator *and* a learned early-exit policy so that the sampler can halt as soon as (i) the predicted budget would be exceeded or (ii) further steps bring negligible quality gain.\n\n1. Context vector c  = [log B, log F̂, ρ]  (as in BuCo-MWG).\n2. Weight generator  g_ψ(t | c, z)  – identical to BuCo-MWG (<15 k params).\n3. Early-exit policy π_θ(h_t | c) → p(stop=1).   Input h_t = concat(σ_t, ‖ε̂_t‖², t/T, c). One 2×32 MLP with Gumbel-Softmax so the stop/continue decision is differentiable.\n4. Differentiable cost predictor Ĉ(h_t) estimates the *remaining* latency if one more denoise step is executed on the current device.\n5. Joint training:\n   For each minibatch   L = L_eps + λ_1 KL_align + λ_2 max(0, Ĉ_accum−B)²  + λ_3 E_t [p(stop=1)·max(0, Q_target−Q̂_t)]  where Ĉ_accum accumulates predicted cost until the policy stops, and Q̂_t is a fast FID/CLIP proxy.\n   Gradients flow through g_ψ and π_θ so both the weights and the stopping rule co-adapt.\n6. Inference (Algorithm):\n   • compute c once; for t=1…K_max\n       – w_t ← g_ψ(t|c,z); perform denoise step\n       – if π_θ(h_t|c)=stop *or* elapsed>B: break\n   • return x_t.  Guarantees: elapsed ≤B by construction; quality monotonically non-decreasing because w_t≥0.\n\nNovelty: first diffusion framework that (1) produces *continuous* weight tables conditioned on hardware and budget and (2) learns an *instance-wise* halting policy, turning any off-the-shelf sampler into an anytime generator with formal budget compliance.",
+        "experimental_design": {
+          "experiment_summary": "We will implement and test the Anytime Budget-Aware Diffusion Controller (ABCD). ABCD adds two light-weight neural modules around any pre-trained diffusion sampler: (1) a budget-conditioned weight generator g_ψ that outputs a continuous importance schedule and (2) an early-exit policy π_θ that halts generation before the latency/energy budget B is exceeded or when additional steps yield marginal quality gain. Both modules share a context vector c=[log B, log F̂, ρ] and are trained jointly with a differentiable cost predictor Ĉ.  Training loss L= L_eps + λ1 KL_align + λ2 (max(0,Ĉ_accum−B))² + λ3 E_t[p(stop)·max(0,Q_target−Q̂_t)] makes the schedule adhere to the diffusion prior, stay within budget, and maximise a fast image-quality proxy.  At inference, we (i) build c from the request and on-device FLOPs estimate, (ii) stream weights w_t=g_ψ(t|c,z) into the sampler, (iii) after each denoise step evaluate π_θ(h_t|c); if stop or elapsed>B, we return x_t.  The experiment trains ABCD on ImageNet-64 with CPU-friendly 64×64 crops and evaluates it against the BuCo-MWG baseline on unseen prompts and budgets.  Metrics recorded are Quality-Under-Budget (QUB), Success-Rate, and Average Latency Utilisation.  Hyper-parameters such as learning rate and λ-weights are tuned by random search within small ranges compatible with 500 MB RAM.  The outcome will demonstrate ABCD’s superior QUB and energy savings even when executed on a resource-constrained CPU.",
+          "evaluation_metrics": [
+            "Quality-Under-Budget (QUB)",
+            "Success-Rate",
+            "Average Latency Utilisation"
+          ],
+          "proposed_method": "Anytime Budget-Aware Diffusion Controller (ABCD)\n1. Context vector c=[log B, log F̂, ρ].\n2. Weight generator g_ψ(t|c,z): 2-layer MLP (32 hidden units) with sinusoidal time embedding; outputs non-negative weight w_t.\n3. Early-exit policy π_θ(h_t|c): 2-layer 32-unit MLP, Gumbel-Softmax head -> p(stop).\n4. Cost predictor Ĉ(h_t): linear head on shared h_t to estimate remaining latency.\n5. Joint training on ImageNet-64 with DDIM sampler, teacher-forced  K_max=50.  Optimise loss L= L_eps + λ1 KL_align + λ2 (max(0,Ĉ_accum−B))² + λ3 E_t[p(stop)·max(0,Q_target−Q̂_t)].\n6. Inference: for t=1…K_max: (i) w_t←g_ψ; (ii) denoise; (iii) build h_t; (iv) if π_θ says stop or elapsed>B break.\nGuarantees: returned image respects B; quality increases monotonically because w_t≥0.  Parameter count ≈20 k, fits easily in 500 MB CPU memory.",
+          "comparative_methods": [
+            "BuCo-MWG"
+          ],
+          "models_to_use": [],
+          "datasets_to_use": [
+            "ImageNet-64"
+          ],
+          "hyperparameters_to_search": {
+            "learning_rate": "0.0001-0.01",
+            "lambda_1": "0.1-1.0",
+            "lambda_2": "0.1-1.0",
+            "lambda_3": "0.1-1.0",
+            "hidden_size": "16,32,64",
+            "gumbel_temperature": "0.1-1.0"
+          }
+        },
+        "experiment_runs": [
+          {
+            "run_id": "proposed-iter1-ImageNet-64",
+            "method_name": "proposed",
+            "dataset_name": "ImageNet-64"
+          },
+          {
+            "run_id": "comparative-1-iter1-ImageNet-64",
+            "method_name": "comparative-1",
+            "dataset_name": "ImageNet-64"
+          }
+        ]
       }
     ]
   }
