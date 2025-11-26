@@ -1,0 +1,10 @@
+{
+  "research_topic": "diffusion model speedup",
+  "queries": [
+    "fast diffusion sampling",
+    "diffusion model acceleration",
+    "denoising diffusion acceleration",
+    "DDIM fast sampling",
+    "diffusion model distillation"
+  ]
+}
