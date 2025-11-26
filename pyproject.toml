@@ -1,1 +1,23 @@
-# Please list the required python packages.
+[project]
+name = "abcd-controller"
+version = "0.1.0"
+description = "Anytime Budget-Aware Diffusion Controller experiments"
+requires-python = ">=3.10"
+
+[project.dependencies]
+torch = ">=2.0.0"
+torchvision = "*"
+hydra-core = "*"
+omegaconf = "*"
+wandb = "*"
+optuna = "*"
+pandas = "*"
+pyyaml = "*"
+datasets = "*"
+Pillow = "*"
+numpy = "*"
+scipy = "*"
+matplotlib = "*"
+seaborn = "*"
+tqdm = "*"
+scikit-learn = "*"
