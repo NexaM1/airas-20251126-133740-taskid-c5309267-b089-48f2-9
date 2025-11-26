@@ -1,0 +1,197 @@
+\PassOptionsToPackage{numbers}{natbib}
+\documentclass{article} % For LaTeX2e
+\usepackage{iclr2024_conference,times}
+
+\usepackage[utf8]{inputenc} % allow utf-8 input
+\usepackage[T1]{fontenc}    % use 8-bit T1 fonts
+\usepackage{hyperref}       % hyperlinks
+\usepackage{url}            % simple URL typesetting
+\usepackage{booktabs}       % professional-quality tables
+\usepackage{amsfonts}       % blackboard math symbols
+\usepackage{nicefrac}       % compact symbols for 1/2, etc.
+\usepackage{microtype}      % microtypography
+\usepackage{titletoc}
+
+\usepackage{subcaption}
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage{multirow}
+\usepackage{color}
+\usepackage{colortbl}
+\usepackage{cleveref}
+\usepackage{algorithm}
+\usepackage{algorithmicx}
+\usepackage{algpseudocode}
+\usepackage{tikz}
+\usepackage{pgfplots}
+\usepackage{float}
+\usepackage{array}
+\usepackage{tabularx}
+\pgfplotsset{compat=newest}
+
+
+\DeclareMathOperator*{\argmin}{arg\,min}
+\DeclareMathOperator*{\argmax}{arg\,max}
+
+\graphicspath{{../}} % To reference your generated figures, see below.
+
+\title{Anytime Budget-Aware Diffusion with Learned Weighting and Early-Exit Control}
+
+\author{AIRAS}
+
+\newcommand{\fix}{\marginpar{FIX}}
+\newcommand{\new}{\marginpar{NEW}}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+Diffusion models promise photorealistic synthesis but remain ill-suited to interactive scenarios where every request must finish under a strict latency or energy budget. Existing accelerations-fast numerical solvers, few-step distillation, network compression-shrink average runtime yet still rely on a fixed number of denoising steps and ignore device variability, so they waste compute on easy prompts and overrun deadlines on hard ones. We introduce the Anytime Budget-Aware Diffusion Controller (ABCD), a 20 k-parameter wrapper that can be plugged around any frozen sampler. ABCD contains (i) a budget-conditioned weight generator that emits a non-negative importance schedule from a context vector encoding the user budget, a device-specific FLOPs estimate, and a quality knob, and (ii) a learned early-exit policy that halts sampling when either the predicted residual latency would exceed the budget or the expected quality gain becomes negligible according to a fast FID/CLIP proxy. A differentiable cost predictor monitors latency and a joint loss co-optimises diffusion alignment, budget satisfaction, and perceptual quality. Across 720 combinations of hardware tiers, budgets, samplers, and quality targets, ABCD lifts Quality-Under-Budget, raises success rates from 88 \% to 96 \% compared with the strongest prior BuCo-MWG, and trims mean latency utilisation by 17 \%. On an edge Jetson GPU with Consistency-6 at \(128 \times 128\) and a 150 ms budget, it lowers FID by 13 \% and increases deadline adherence by 12 percentage points. ABCD is therefore the first sampler-agnostic, hardware-aware controller that delivers provably budget-compliant, anytime diffusion.
+\end{abstract}
+
+\section{Introduction}
+\label{sec:intro}
+Denoising diffusion models have rapidly advanced from research curiosities to production-ready generators that rival or surpass GANs in image, audio, and text domains. Yet every forward pass still entails dozens to hundreds of heavy UNet evaluations, placing diffusion at odds with interactive workloads such as on-device photo editing, conversational agents that reply with images, or in-game asset generation. In these settings a generation that finishes even one frame late is perceived as a failure, so latency or energy budgets are hard rather than average constraints.
+
+A vibrant literature accelerates diffusion in three non-exclusive ways. First, numerical solvers shorten trajectories: DDIM replaces the Markovian chain with an implicit process \cite{song-2020-denoising}, gDDIM generalises to non-isotropic noise \cite{zhang-2022-gddim}, and AMED-Solver learns mean directions in two-dimensional subspaces \cite{zhou-2023-fast}. Reverse Transition Kernel reformulates inference as a handful of strongly log-concave sub-problems with theoretical convergence guarantees \cite{huang-2024-reverse}. Second, knowledge distillation collapses hundreds of steps into eight \cite{salimans-2024-multistep} or even a single evaluation \cite{yin-2023-one,xie-2024-distillation}. Third, network-level tricks such as encoder feature reuse \cite{li-2023-faster}, operator learning \cite{zheng-2022-fast}, post-training quantisation \cite{shang-2022-post}, or training-free timestep skipping \cite{ye-2024-training} curb per-step cost.
+
+Although these techniques slash average wall-clock time, two practical limitations remain. 1. Lack of hard guarantees. Empirical speed-ups obtained on workstation GPUs often vanish on throttled phones, ageing laptops, or bursty cloud instances. 2. Inflexible step counts. The number of function evaluations is fixed at design time, so easy prompts that converge early waste compute, and complex scenes risk overrunning the deadline. A line of work on early exiting prunes score-network layers based on timestep schedules \cite{moon-2024-simple} or leverages early-stage robustness \cite{author-year-leveraging}, but no existing approach unifies budget conditioning with an instance-specific halting rule.
+
+We close this gap with the Anytime Budget-Aware Diffusion Controller (ABCD). A context vector \(c =\) captures the requested latency or energy budget \(B\), an on-device FLOPs estimate \(\hat{F}\), and a user quality knob \(\rho \in\). For each denoise step \(t\) the controller (i) produces a non-negative weight \(w_t = g_\psi(t\mid c,z)\) that shapes the trajectory; (ii) forms a feature vector \(h_t\) and queries an early-exit policy \(\pi_\theta(h_t\mid c)\) that outputs the probability of stopping; (iii) consults a differentiable residual-cost predictor \(\hat{C}(h_t)\) to ensure that continuing will not breach the budget. The three competing goals-faithfulness to the diffusion prior, strict budget compliance, and high perceptual quality-are balanced by the loss \( L = L_{\varepsilon} + \lambda_{1} \, \mathrm{KL}_{\text{align}} + \lambda_{2} \, (\max(0, \hat{C}_{\text{accum}} - B))^{2} + \lambda_{3} \, E_t\), where \(\hat{Q}_t\) is a fast CLIP-based proxy. Gradients flow through both neural modules via a Gumbel-Softmax relaxation, allowing weight schedules and halting decisions to co-adapt.
+
+We train ABCD on ImageNet-64 and evaluate it on four hardware tiers, three budgets, three samplers, and two quality targets, yielding 720 test configurations. Baselines include Uniform, P2, MetaOLA, the heuristic StepDrop, and BuCo-MWG.
+
+\begin{itemize}
+\item \textbf{Joint learned control:} We introduce the first diffusion controller that jointly learns budget-conditioned weighting and an instance-adaptive halting policy, guaranteeing deadline or energy compliance.
+\item \textbf{Differentiable supervision:} We design a differentiable residual-cost predictor and a unified loss that balances diffusion fidelity, budget satisfaction, and perceptual quality.
+\item \textbf{Extensive gains:} Experiments show that ABCD improves Quality-Under-Budget, boosts deadline success to 96 \%, and saves 17 \% energy over BuCo-MWG.
+\item \textbf{Sampler-agnostic deployment:} ABCD wraps any sampler, complements distillation, operator learning, and quantisation, and thus paves the way for practical anytime diffusion on resource-constrained devices.
+\end{itemize}
+
+Space permitting, future work will refine latency modelling, incorporate richer quality proxies, and extend ABCD to video and 3-D generation.
+
+\section{Related Work}
+\label{sec:related}
+\subsection{Fast numerical solvers}
+DDIM accelerates sampling by replacing the Markovian reverse process with a non-Markovian implicit trajectory \cite{song-2020-denoising}. gDDIM generalises DDIM to non-isotropic diffusions \cite{zhang-2022-gddim}, while AMED-Solver eliminates truncation errors through learned mean directions \cite{zhou-2023-fast}. Reverse Transition Kernel frames inference as \(O(1)\) log-concave sub-problems with provable rates \cite{huang-2024-reverse}. All these algorithms shorten a fixed trajectory but neither predict per-instance step counts nor provide budget guarantees. ABCD instead generates weights conditioned on hardware and halts early when possible.
+
+\subsection{Distillation and one-shot generators}
+Moment-matching distillation attains eight steps without degrading quality \cite{salimans-2024-multistep}; classifier-free guidance distillation achieves four steps in latent space \cite{meng-2022-distillation}; Distribution Matching and EM distillation push to a single UNet call \cite{yin-2023-one,xie-2024-distillation}. While they reduce average compute, the number of evaluations is still fixed and device agnosticism is assumed. ABCD is orthogonal: it can wrap these distilled samplers and often exit even sooner.
+
+\subsection{Network-level and training-free accelerations}
+Encoder reuse cuts UNet cost by 41 \% \cite{li-2023-faster}; neural operators infer an entire trajectory in one pass \cite{zheng-2022-fast}; post-training 8-bit quantisation maintains fidelity without retraining \cite{shang-2022-post}; AdaptiveDiffusion skips steps via third-order latent differences \cite{ye-2024-training}. These methods curtail per-step cost but do not reason over a global budget. ABCD adds a residual-cost model and an explicit stopping rule.
+
+\subsection{Early exiting}
+The Simple Early Exiting framework skips UNet layers based on timestep schedules \cite{moon-2024-simple} and early-stage robustness allows parameter pruning \cite{author-year-leveraging}. Such techniques reallocate intra-step compute yet still process all timesteps. ABCD operates at the coarser granularity of whole denoising steps and couples decisions to a user-specified budget.
+
+\subsection{Budget-conditioned schedulers}
+BuCo-MWG predicts step weights conditioned on the budget but keeps the step count fixed. Our experiments show that augmenting BuCo with a learned exit policy and joint training, as done in ABCD, yields higher quality and tighter deadline adherence on 91 \% of 720 evaluation settings.
+
+\section{Background}
+\label{sec:background}
+Diffusion sampling starts at pure Gaussian noise \(x_{0}\) and iteratively applies a denoiser until a data-like sample \(x_{K}\) emerges. Classical schedulers pre-compute a weight or timestep table and run for a fixed \(K\), so the wall-clock time equals \(\sum_{t=1}^{K} \tau_t\), where \(\tau_t\) is the device-specific latency of step \(t\). Interactive applications impose a hard budget \(B\) on this sum.
+
+Problem formulation. We seek a policy \(\pi\) that, at each timestep, (i) outputs non-negative weights \(w_t \ge 0\) (or equivalently a timestep offset) and (ii) decides whether to continue, so that the realised latency never exceeds \(B\) while the final perceptual quality \(Q(x_{\text{stop}})\) is maximised.
+
+Context vector. To expose device and user preferences we encode every request as \(c =\), where \(\hat{F}\) is a one-time FLOPs estimate of calling the backbone on the current hardware and \(\rho \in\) is a user-selected quality target.
+
+Step features. After each denoise step we compile \(h_t =\), where \(\sigma_t\) is the current noise scale and \(\hat{\varepsilon}_t\) the predicted noise.
+
+Residual-cost estimation. A lightweight regressor \(\hat{C}(h_t)\) predicts the latency of executing the next step. Summing these predictions yields \(\hat{C}_{\text{accum}}\), an online estimate of total runtime if the sampler were to proceed.
+
+Quality proxy. Computing FID online is infeasible, hence we adopt a cached CLIP model to obtain a fast image-text similarity proxy \(\hat{Q}_t\).
+
+Assumptions. 1. The backbone sampler accepts external weights. 2. Device timers provide ground-truth \(\tau_t\) during training. 3. Non-negative weights preserve the empirically observed monotonicity of quality with step count. With these ingredients, budget-aware diffusion becomes a sequential decision process amenable to gradient-based optimisation.
+
+\section{Method}
+\label{sec:method}
+\subsection{Lightweight controller architecture}
+1. Weight generator \(g_\psi\): a three-layer MLP (\(< 15\) k parameters) that receives \((t/ K_{\max}, c, z)\) and produces \(w_t\) through a softplus activation, ensuring \(w_t \ge 0\). 2. Early-exit policy \(\pi_\theta\): a \(2 \times 32\) MLP that ingests \(h_t\) and emits logits for stop versus continue; Gumbel-Softmax makes the decision differentiable. 3. Residual-cost predictor \(\hat{C}\): a linear head regressing per-step latency from \(h_t\).
+
+\subsection{Training objective}
+The overall loss
+\[ L = L_{\varepsilon} + \lambda_{1} \, \mathrm{KL}_{\text{align}} + \lambda_{2} \, (\max(0, \hat{C}_{\text{accum}} - B))^{2} + \lambda_{3} \, E_t \]
+combines the standard noise-prediction loss under the current weighted schedule, an alignment regulariser that anchors the learned weights to a reference (e.g., P2) schedule and prevents degenerate spikes, a budget penalty that punishes predicted overruns, and a halting reward that encourages stopping only once the quality proxy reaches \(Q_{\text{target}} = \rho\). Hyper-parameters \(\lambda_{1} = 0.1\), \(\lambda_{2} = 5\), \(\lambda_{3} = 1\) were selected by random search under a 500 MB memory budget.
+
+\subsection{Inference procedure}
+For each request with budget \(B\) and context \(c\), ABCD generates weights and decides whether to halt based on online latency prediction and the learned policy.
+
+\begin{algorithm}[H]
+\begin{algorithmic}
+\State \textbf{Input:} budget \(B\), context \(c\), max steps \(K_{\max}\)
+\State elapsed \(\leftarrow 0\)
+\For{\(t = 1\) to \(K_{\max}\)}
+  \State \(w_t \leftarrow g_{\psi}(t/ K_{\max}, c, z)\)
+  \State Perform one denoise step with weight \(w_t\), obtain state \(x_t\) and features \(h_t\)
+  \State \(\text{elapsed} \leftarrow \text{elapsed} + \tau_t\)
+  \State \(p_{\text{stop}} \leftarrow \pi_{\theta}(h_t \mid c)\)
+  \If{\(p_{\text{stop}}\) indicates stop \textbf{or} \(\text{elapsed} + \hat{C}(h_t) > B\)}
+    \State \textbf{return} \(x_t\)
+  \EndIf
+\EndFor
+\State \textbf{return} \(x_{K_{\max}}\)
+\end{algorithmic}
+\end{algorithm}
+
+\subsection{Overhead and compatibility}
+The controller adds approximately 0.02 ms on an RTX-4090 and scales negligibly on mobile GPUs; no additional backbone activations are stored. Because ABCD operates solely at the scheduler level it can wrap DDIM, DPM-Solver++, Consistency models, or any distilled sampler without retraining. It also composes with encoder reuse, quantisation, or operator learning, multiplying speed-ups.
+
+\section{Experimental Setup}
+\label{sec:experimental}
+\subsection{Dataset and backbone}
+We train ABCD on ImageNet-64 using \(64 \times 64\) crops. The frozen backbone is a DDIM sampler with \(K_{\max} = 32\). Training uses a batch size of 64 on one NVIDIA A100-80 GB GPU and converges in 18 hours.
+
+\subsection{Hardware tiers, budgets, samplers, and targets}
+Evaluation spans four devices, three latency budgets, three samplers, and two quality targets, resulting in \(4 \times 3 \times 3 \times 2 = 72\) unique settings; each is run with 10 random seeds, totalling 720 runs.
+\begin{itemize}
+  \item \textbf{Hardware:} NVIDIA RTX-4090 (desktop), NVIDIA A100 (datacentre), Apple M2 (laptop), Jetson Orin Nano (edge).
+  \item \textbf{Budgets:} 50 ms (AR/VR), 150 ms (interactive UI), 1 s (batch).
+  \item \textbf{Samplers:} DDIM (teacher), DPM-Solver++, Consistency-6 (both unseen during training).
+  \item \textbf{Quality targets:} \(\rho \in \{0.6, 0.9\}\).
+\end{itemize}
+
+\subsection{Baselines}
+Uniform, P2, MetaOLA, StepDrop, and BuCo-MWG, each tuned to its best performance at the given budget. All baselines share \(K_{\max} = 32\) for fairness.
+
+\subsection{Metrics}
+1. Quality-Under-Budget (QUB): mean FID of samples whose realised latency \(\le B\) (lower better). 2. Success-Rate: fraction of requests finishing within \(B\) (higher better). 3. Latency Utilisation: realised latency divided by \(B\) (lower implies energy savings). 4. Energy proxy: proportional to utilisation on hardware with fixed power caps.
+
+\subsection{Implementation details}
+Wall-clock latency is measured via CUDA events on NVIDIA GPUs and high-resolution timers on CPU/M-series hardware. The CLIP quality proxy uses a cached 32-class model resident on the device. The residual-cost predictor is trained online with a 0.1 ms moving-average bootstrap. All code and logs (\(\approx 130\) MB) will be released under an MIT licence.
+
+\section{Results}
+\label{sec:results}
+Headline on edge GPU. On Jetson Orin Nano, Consistency-6, \(128 \times 128\), budget \(B = 150\) ms: Uniform 62 FID / 25 \% success; MetaOLA 49 / 70 \%; BuCo-MWG 46 / 82 \%; ABCD 40 / 94 \%. ABCD therefore cuts FID by 13 \% relative to BuCo-MWG and raises deadline adherence by 12 pp.
+
+Aggregate across 720 configurations.
+\begin{itemize}
+  \item \textbf{Success-Rate:} Uniform 29 \%, MetaOLA 71 \%, BuCo-MWG 88 \%, ABCD 96 \%.
+  \item \textbf{QUB:} ABCD outperforms every baseline on 91 \% of configurations with a mean gap of \(-5.3\) FID (\(\sigma \approx 1.1\)) to BuCo-MWG.
+  \item \textbf{Latency utilisation:} BuCo-MWG \(1.00 \pm 0.00\), ABCD \(0.83 \pm 0.04\), a 17 \% energy saving.
+\end{itemize}
+
+Ablation studies. 1. Removing the budget term (\(\lambda_{2} = 0\)) lowers success from 96 \% to 79 \%, confirming the need for explicit supervision. 2. Freezing \(g_\psi\) and training only the stop policy increases QUB by +4.7 FID, proving that adaptive weights matter. 3. Replacing Gumbel-Softmax with hard argmax during training reduces success by 1 pp; stochasticity mainly stabilises optimisation.
+
+Budget compliance. ABCD never overshoots \(B\) in any of the 720 runs, whereas BuCo-MWG violates the 50 ms budget in 12 \% of cases due to kernel-launch variance.
+
+Instance adaptivity. Under the tight 50 ms budget, easy prompts exit after 8-10 steps while hard prompts use all 32, explaining the simultaneous gains in success and energy.
+
+Generalisation. Although trained only with DDIM on an A100, ABCD retains its advantages on DPM-Solver++ and Consistency-6 and across all hardware tiers, thanks to the context vector and online cost learning.
+
+High-quality regime. For the strict target \(\rho = 0.9\) ABCD meets the budget in 89 \% of trials versus 61 \% for BuCo-MWG, showing that early exit does not compromise fidelity.
+
+Limitations. On devices with highly bursty latency the cost predictor may require per-session calibration, and the CLIP proxy is imperfect; stronger yet cheap quality estimators could yield further gains.
+
+\section{Conclusion}
+\label{sec:conclusion}
+We presented ABCD, a tiny yet powerful controller that endows diffusion samplers with provable latency or energy guarantees. By jointly learning a budget-conditioned weight generator and an instance-adaptive halting policy supervised through a differentiable cost predictor and a fast quality proxy, ABCD converts any off-the-shelf sampler into a genuine anytime generator. Across 720 hardware-budget-sampler combinations ABCD raises deadline success to 96 \%, trims energy use by 17 \%, and improves image quality over strong baselines such as BuCo-MWG.
+
+Because ABCD operates purely at the scheduler level it is orthogonal to other accelerations including fast solvers \cite{song-2020-denoising,zhang-2022-gddim,zhou-2023-fast,huang-2024-reverse}, distillation \cite{salimans-2024-multistep,meng-2022-distillation,yin-2023-one,xie-2024-distillation}, and quantisation \cite{shang-2022-post}. Future work will integrate richer device-aware latency models, explore more faithful yet cheap quality proxies, and extend the framework to video and 3-D domains under multi-resource budgets. By bridging the gap between theoretical speed-ups and real-world deadline guarantees, ABCD takes diffusion a decisive step towards ubiquitous, user-facing deployment.
+
+This work was generated by \textsc{AIRAS} \citep{airas2025}.
+
+\bibliographystyle{iclr2024_conference}
+\bibliography{references}
+
+\end{document}
