@@ -2,6 +2,7 @@
 # Root Hydra configuration (merged with config/runs/<run_id>.yaml)
 
 run: null              # must be supplied via CLI, e.g. run=proposed-iter1-ImageNet-64
+run_id: null           # can be overridden by run-specific config
 mode: full             # {full, trial}
 results_dir: ./results
 
