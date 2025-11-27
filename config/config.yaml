@@ -15,6 +15,7 @@ wandb:
 optuna:
   n_trials: 0
   direction: maximize
+  metric: null
   search_space: {}
 
 model: null            # model configuration (overridden by run-specific config)
