@@ -251,7 +251,10 @@ def main(cfg):  # noqa: D401
     run_yaml = ROOT / "config" / "runs" / f"{cfg.run}.yaml"
     if not run_yaml.exists():
         raise FileNotFoundError(run_yaml)
+    # Temporarily disable struct mode to allow new keys during merge
+    OmegaConf.set_struct(cfg, False)
     cfg = OmegaConf.merge(cfg, OmegaConf.load(run_yaml))
+    OmegaConf.set_struct(cfg, True)
 
     # ------------------------------------------------------------------
     # Trial / Full mode overrides
