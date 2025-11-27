@@ -5,6 +5,7 @@ run: null              # must be supplied via CLI, e.g. run=proposed-iter1-Image
 run_id: null           # can be overridden by run-specific config
 mode: full             # {full, trial}
 results_dir: ./results
+method: null           # method type (e.g., ABCD)
 
 wandb:
   entity: gengaru617-personal
@@ -15,6 +16,10 @@ optuna:
   n_trials: 0
   direction: maximize
   search_space: {}
+
+model: null            # model configuration (overridden by run-specific config)
+dataset: null          # dataset configuration (overridden by run-specific config)
+training: null         # training configuration (overridden by run-specific config)
 
 additional_settings:
   seed: 42
