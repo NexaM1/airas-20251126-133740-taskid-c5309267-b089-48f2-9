@@ -5,3 +5,10 @@
 [2025-11-27 06:02:02,832][httpx][INFO] - HTTP Request: HEAD https://huggingface.co/datasets/huggan/imagenet-64/resolve/main/README.md "HTTP/1.1 401 Unauthorized"
 === [TRIAL RUN] PASSED for proposed-iter1-ImageNet-64 at Thu Nov 27 06:02:04 UTC 2025 ===
 
+=== [UV SYNC] Start at Thu Nov 27 06:02:36 UTC 2025 ===
+=== [UV SYNC] Finished successfully at Thu Nov 27 06:08:49 UTC 2025 ===
+=== [TRIAL RUN] Start for comparative-1-iter1-ImageNet-64 at Thu Nov 27 06:08:49 UTC 2025 ===
+[main] launching: /home/runner/work/airas-20251126-133740-taskid-c5309267-b089-48f2-9/airas-20251126-133740-taskid-c5309267-b089-48f2-9/.venv/bin/python3 -u -m src.train run=comparative-1-iter1-ImageNet-64 mode=trial results_dir=.research/iteration1
+[2025-11-27 06:08:59,867][httpx][INFO] - HTTP Request: HEAD https://huggingface.co/datasets/huggan/imagenet-64/resolve/main/README.md "HTTP/1.1 401 Unauthorized"
+=== [TRIAL RUN] PASSED for comparative-1-iter1-ImageNet-64 at Thu Nov 27 06:09:00 UTC 2025 ===
+
